@@ -1,0 +1,20 @@
+{
+ "url": "http://localhost:4413/lamplit/app/#/runs/4812",
+ "viewport": [1080, 1080],
+ "ready": "[data-ready]",
+ "rects": {
+  "head": ".run-head",
+  "replay": "[data-action=\"replay-from-step\"]",
+  "waterfall": "[data-panel=\"waterfall\"]"
+ },
+ "steps": [
+  { "rects": "start" },
+  { "capture": "page", "full": true, "scale": 2 },
+  { "capture": "head", "around": ".run-head", "pad": 24, "scale": 4 },
+  { "click": "[data-action=\"replay-from-step\"]" },
+  { "wait": 300 },
+  { "rects": "after" },
+  { "capture": "page-after", "full": true, "scale": 2 },
+  { "capture": "head-after", "around": ".run-head", "pad": 24, "scale": 4 }
+ ]
+}

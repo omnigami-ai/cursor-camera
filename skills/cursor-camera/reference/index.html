@@ -1,0 +1,382 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lamplit · Cursor camera · Fictional company example</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1220; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+</style>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script src="kit.js"></script>
+<script>
+// Cursor camera: one proof shot cut from the product film. A real screen, wide; the big cursor
+// glides to a control; the camera zooms in on the click, the capture swaps to the result, and
+// the camera pulls back out. 8 s on the 120 BPM grid, 60 fps, in wide, square and tall.
+// The screens are real captures of Lamplit's dashboard (a fictional developer tool made for
+// omnigami's examples, cast/lamplit/), made by scripts/screens.mjs from plans/desktop.json
+// (wide, 1440 × 900), plans/mobile.json (square, a 1080 × 1080 window) and plans/tall.json
+// (tall, a 1080 × 1920 window).
+//
+//   KEEP   the grid, shapes, toolkit (type, cursor, camera), the camera's rules and gaps, drawing
+//   ADAPT  SHOT (captures and rects by name), SCREENS for square, the colours, the optional
+//          caption, the times and the cues
+(() => {
+  const { clamp, lerp, loadFont, loadImage } = window.kit;
+  const FPS = 60, F = 1 / 12, BPM = 120, BEAT = 60 / BPM, BAR = 4 * BEAT, DURATION = 4 * BAR;
+  const at = (bar, beat = 0) => bar * BAR + beat * BEAT; // a time on the beat grid
+  // each shape's frame, and the real screens it shows: the desktop page in wide; a narrower
+  // layout in square and tall (a phone layout, or, for a desktop product like Lamplit, its own
+  // narrow window), so the control and its result read there
+  const SHAPES = { '16:9': [1920, 1080], '1:1': [1440, 1440], '9:16': [1080, 1920] };
+  const SCREENS = { '16:9': 'screens', '1:1': 'screens-mobile', '9:16': 'screens-tall' }; // tall: a 1080 × 1920 window, so the page fills the frame
+  let W = 1920, H = 1080, U = 10.8, tall = false, set = 'screens', shape = '16:9'; // U: 1% of the frame's short side
+
+  const canvas = document.getElementById('c');
+  const g = canvas.getContext('2d', { willReadFrequently: true });
+
+  // ADAPT: the product's colours: its ground, its darkest ink (the cursor), its light text (the
+  // cursor's outline) and its brand colour, the accent (Lamplit's amber).
+  const PAPER = '#0E1220', INK = '#080B14', LIGHT = '#ECEAE3', ACCENT = '#FFB23F';
+  const SANS = (w) => (s) => `${w} ${s}px "Instrument Sans"`;
+
+  // ---------- ADAPT: the words ----------
+  // The shot reads best as the screen alone, full frame: the product's own words say what it
+  // is. A caption is optional; it takes a band across the top of the frame.
+  const DEFAULTS = { caption: '' };
+  const FIELDS = [
+    { id: 'caption', type: 'text', label: 'Caption (optional)', maxLength: 32, help: 'What the click does for the viewer, beside the screen. Empty: the screen fills the frame.' },
+  ];
+  let V = DEFAULTS; // set from seek's arguments on every frame
+
+  // ---------- ADAPT: the shot, by capture and rect name (assets/<set>/screens.json) ----------
+  // page: the whole page (pageAfter: the whole page after the click, when the click changes
+  // more than the close capture covers); before / after: the close capture the click swaps;
+  // screen: the wide view (the part of the page the shot is about);
+  // focus: what the zoom must show whole (the control with its own label, and its neighbours
+  // where they fit); target: what the cursor clicks. The camera works out the rest.
+  // Lamplit: the failed run's page; "Replay from write-ledger" opens its replay, queued.
+  const SHOT = {
+    page: 'page', pageAfter: 'page-after', before: 'head', after: 'head-after',
+    screen: () => union([R('start').head, R('start').waterfall]), // the run's header and its steps
+    focus: () => R('start').head, // the header: the run, its status, the replay buttons
+    target: () => R('start').replay,
+  };
+  // ADAPT: when things happen, on the beat grid. OpenScreen's rules: open wide 2.5 s; fully in
+  // 0.5 s before the click; hold 1.5 s after it; end wide 1 s or more.
+  const T = { caption: at(0, 1), enter: at(0, 2), zoom: at(1, 1), aim: at(1, 3), click: at(2), out: at(2, 3) };
+
+  // ---------- KEEP: assets, the real screens for each shape ----------
+  const A = { sets: {}, img: {}, gaps: {} };
+  const cap = (name) => { const c = A.sets[set].captures[name]; return { img: A.img[`assets/${set}/${c.file}`], rect: c.rect, scale: c.scale }; };
+  const R = (state) => A.sets[set].rects[state];
+  const mid = ([x, y, w, h]) => [x + w / 2, y + h / 2];
+  // where the cursor presses a control: its lower right, so its label stays in view
+  const pressAt = ([x, y, w, h]) => [x + w * 0.85, y + h * 0.88];
+  const downTo = ([x, y, w], last, pad = 16) => [x, y, w, last[1] + last[3] + pad - y]; // a rect, cut off below `last`
+  const union = (rects) => { const l = Math.min(...rects.map((r) => r[0])), t = Math.min(...rects.map((r) => r[1])); return [l, t, Math.max(...rects.map((r) => r[0] + r[2])) - l, Math.max(...rects.map((r) => r[1] + r[3])) - t]; };
+  // the camera framing that shows a page rect whole, with a margin (share of the rect)
+  const fitK = ([, , w, h], mx = 0.08, my = 0.08) => Math.min(W / (w * (1 + 2 * mx)), H / (h * (1 + 2 * my)));
+
+  // ---------- KEEP: gaps, so the frame's edges fall between lines, never through words ----------
+  // Built once in prepare() from each page capture: for every row (and column) of CSS pixels,
+  // how many 8-px cells of it hold detail. A frame edge may rest where a row (or column) holds
+  // no more detail than the plainest one near it: a gap between lines, crossed only by borders.
+  const CELL = 8;
+  function gapsOf(c) {
+    const [rx, ry, rw, rh] = c.rect, w = Math.ceil(rw), h = Math.ceil(rh), nx = Math.ceil(w / CELL), ny = Math.ceil(h / CELL);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const cx = cv.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(c.img, 0, 0, w, h);
+    const d = cx.getImageData(0, 0, w, h).data, L = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) L[i] = (d[i * 4] * 77 + d[i * 4 + 1] * 150 + d[i * 4 + 2] * 29) >> 8;
+    // running counts of detailed cells along each row (rows) and down each column (cols)
+    const rows = new Uint16Array(h * (nx + 1)), cols = new Uint16Array(w * (ny + 1));
+    for (let y = 0; y < h; y++) for (let b = 0; b < nx; b++) {
+      let lo = 255, hi = 0; for (let x = b * CELL; x < Math.min(w, b * CELL + CELL); x++) { const v = L[y * w + x]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      rows[y * (nx + 1) + b + 1] = rows[y * (nx + 1) + b] + (hi - lo > 24);
+    }
+    for (let x = 0; x < w; x++) for (let b = 0; b < ny; b++) {
+      let lo = 255, hi = 0; for (let y = b * CELL; y < Math.min(h, b * CELL + CELL); y++) { const v = L[y * w + x]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      cols[x * (ny + 1) + b + 1] = cols[x * (ny + 1) + b] + (hi - lo > 24);
+    }
+    return { rx, ry, w, h, nx, ny, rows, cols };
+  }
+  // is the page plain along a horizontal (or vertical) band from a to b, across lo–hi?
+  function plain(G, horizontal, a, b, lo, hi) {
+    const [n, size, run, off, offAcross] = horizontal ? [G.h, G.nx, G.rows, G.ry, G.rx] : [G.w, G.ny, G.cols, G.rx, G.ry];
+    const c0 = clamp(Math.floor((lo - offAcross) / CELL), 0, size), c1 = clamp(Math.floor((hi - offAcross) / CELL) + 1, 0, size);
+    const detail = (p) => (p < 0 || p >= n ? 0 : run[p * (size + 1) + c1] - run[p * (size + 1) + c0]);
+    const p0 = Math.floor(a - off) - 4, p1 = Math.ceil(b - off) + 4; // with 4 px to spare, so no hairline shows
+    let base = Infinity;
+    for (let p = p0 - 48; p <= p1 + 48; p++) base = Math.min(base, detail(p));
+    for (let p = p0; p <= p1; p++) if (detail(p) > base) return false;
+    return true;
+  }
+  // settle a view (centre x, y; scale k) so its edges fall in gaps: moved up to 10% of its size
+  // and scaled up to 4% either way, its edges plain through `drift` (a share of the half-size)
+  // as the camera breathes inward during a hold. Unchanged when no such place is near.
+  function settle(x, y, k, drift) {
+    const G = A.gaps[set], reach = 0.2, give = 1.04;
+    const edges = (horizontal, c, half, lo, hi) => { // plain pairs of edges near c ± half
+      const b = drift * half, r = Math.round(reach * half), first = [], last = [];
+      for (let d = -r; d <= r; d++) {
+        const e0 = Math.round(c - half + d), e1 = Math.round(c + half + d);
+        if (plain(G, horizontal, e0, e0 + b, lo, hi)) first.push(e0);
+        if (plain(G, horizontal, e1 - b, e1, lo, hi)) last.push(e1);
+      }
+      let best = null, score = Infinity;
+      for (const a of first) for (const z of last) {
+        const size = z - a, s = Math.abs(Math.log(size / (2 * half))) / Math.log(give) + Math.abs((a + z) / 2 - c) / (reach * half);
+        if (size >= 2 * half / give && size <= 2 * half * give && s < score) { score = s; best = [(a + z) / 2, size / 2]; }
+      }
+      return best;
+    };
+    const hw = W / 2 / k, hh = H / 2 / k, v = edges(true, y, hh, x - hw * give, x + hw * give);
+    if (v) { k = H / 2 / v[1]; y = v[0]; }
+    // sideways it only moves (the scale is set): the nearest place with both side edges plain
+    const half = W / 2 / k, top = y - H / 2 / k, bottom = y + H / 2 / k, b = drift * half;
+    const sides = (c) => plain(G, false, c - half, c - half + b, top, bottom) && plain(G, false, c + half - b, c + half, top, bottom);
+    for (let d = 0; d <= Math.round(reach * half); d++) {
+      if (sides(x + d)) { x += d; break; }
+      if (sides(x - d)) { x -= d; break; }
+    }
+    return [x, y, k];
+  }
+
+  // ---------- KEEP: the toolkit. Type: words slam in and arrive in the accent ----------
+  const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a, b, p) => { const x = hex(a), y = hex(b); return `rgb(${x.map((v, i) => Math.round(lerp(v, y[i], clamp(p)))).join(',')})`; };
+  const steps = (t, t0) => (t - t0) / F; // time since t0 in steps of 1/12 s, the choreography's unit
+  const out3 = (p) => 1 - (1 - clamp(p)) ** 3;
+  // new words arrive in the accent and cool to their colour: a quarter second accent, then settling
+  const arrive = (t, t0, colour) => { const d = steps(t, t0); return d < 2.5 ? ACCENT : d < 5 ? mix(ACCENT, colour, (d - 2.5) / 2.5) : colour; };
+  function setText(c, font, size, tracking = -0.03) { c.font = font(size); c.letterSpacing = `${tracking * size}px`; c.textBaseline = 'alphabetic'; }
+  const widthOf = (c, font, size, s, tracking) => { setText(c, font, size, tracking); return c.measureText(s).width; };
+  const capOf = (size) => size * 0.7; // Instrument Sans' cap height
+  // words fitted to a width, wrapped at spaces into as few lines as fit
+  function wrap(c, text, font, size, maxW, tracking) {
+    const lines = []; let cur = '';
+    for (const w of text.split(' ').filter(Boolean)) { const next = cur ? `${cur} ${w}` : w; if (cur && widthOf(c, font, size, next, tracking) > maxW) { lines.push(cur); cur = w; } else cur = next; }
+    return [...lines, cur];
+  }
+  // a word slammed in: from oversized and soft to set in about 0.22 s
+  function slam(c, s, x, y, font, size, t, t0, colour, tracking) {
+    const d = steps(t, t0);
+    if (d < 0) return;
+    const e = out3(d / 2.6), k = lerp(1.16, 1, e), blur = 10 * (1 - e) ** 2, alpha = lerp(0.55, 1, Math.sqrt(e));
+    setText(c, font, size, tracking);
+    const w = c.measureText(s).width;
+    c.save(); c.globalAlpha *= alpha; if (blur > 0.2) c.filter = `blur(${blur * U / 10}px)`;
+    c.translate(x + w / 2, y - capOf(size) / 2); c.scale(k, k);
+    c.fillStyle = colour; c.fillText(s, -w / 2, capOf(size) / 2); c.restore();
+  }
+  // a line whose words land a step apart
+  function line(c, text, x, y, font, size, t, t0, { colour = LIGHT, stagger = F, tracking } = {}) {
+    const words = text.split(' ').filter(Boolean), space = widthOf(c, font, size, ' ', tracking);
+    const widths = words.map((w) => widthOf(c, font, size, w, tracking));
+    let wx = x;
+    words.forEach((w, i) => { slam(c, w, wx, y, font, size, t, t0 + i * stagger, arrive(t, t0 + i * stagger, colour), tracking); wx += widths[i] + space; });
+  }
+
+  // ---------- KEEP: the cursor, big, with character ----------
+  // it tilts toward where it's going and shrinks while pressed
+  const ARROW = (c) => { c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 46); c.lineTo(11, 35); c.lineTo(19, 53); c.lineTo(27, 49.5); c.lineTo(19, 32); c.lineTo(34, 32); c.closePath(); };
+  function drawCursor(c, x, y, size, vx, pressed) {
+    const tilt = (-8 + clamp(vx / (W * 1.2), -1, 1) * 16) * Math.PI / 180;
+    c.save(); c.translate(x, y); c.rotate(tilt); c.scale(size / 53 * (pressed ? 0.84 : 1), size / 53 * (pressed ? 0.84 : 1));
+    ARROW(c); c.shadowColor = 'rgba(0,0,0,0.28)'; c.shadowBlur = 12; c.shadowOffsetY = 5;
+    c.lineJoin = 'round'; c.lineWidth = 4.5; c.strokeStyle = LIGHT; c.stroke(); c.shadowColor = 'transparent';
+    c.fillStyle = INK; c.fill(); c.restore();
+  }
+  // cursor keys: [t, x, y] in page coordinates (they ride the camera); a move eases out, fast first
+  function cursorOn(keys, t) {
+    if (t <= keys[0][0]) return [keys[0][1], keys[0][2]];
+    for (let i = 1; i < keys.length; i++) if (t <= keys[i][0]) {
+      const [ta, xa, ya] = keys[i - 1], [tb, xb, yb] = keys[i], p = (t - ta) / (tb - ta), e = 1 - (1 - p) ** 3;
+      return [lerp(xa, xb, e), lerp(ya, yb, e)];
+    }
+    const e = keys[keys.length - 1]; return [e[1], e[2]];
+  }
+
+  // ---------- KEEP: the page camera, and captures through it ----------
+  // keys: [t, x, y, k, ease]: the page point (CSS px) at the frame's centre and the scale (frame
+  // px per CSS px). Scale moves in log space. A pull-back is front-loaded (half its zoom in the
+  // first fifth); a move eases in and out; a drift is the camera breathing.
+  const EASE = {
+    cut: () => 1,
+    pull: (p) => 1 - (1 - p) ** 3.5,
+    move: (p) => (p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2),
+    drift: (p) => p,
+  };
+  function camOn(keys, t) {
+    let a = keys[0], b = keys[0];
+    for (let i = 1; i < keys.length; i++) { if (t < keys[i][0]) { b = keys[i]; break; } a = b = keys[i]; }
+    const q = b === a ? 1 : clamp((t - a[0]) / (b[0] - a[0])), p = b === a ? 1 : EASE[b[4]](q);
+    return { x: lerp(a[1], b[1], p), y: lerp(a[2], b[2], p), k: Math.exp(lerp(Math.log(a[3]), Math.log(b[3]), p)) };
+  }
+  const toFrame = (cam, x, y) => [(x - cam.x) * cam.k + W / 2, (y - cam.y) * cam.k + H / 2];
+  function drawCap(c, cam, name) {
+    const { img, rect: [x, y, w, h] } = cap(name), [fx, fy] = toFrame(cam, x, y);
+    c.drawImage(img, fx, fy, w * cam.k, h * cam.k);
+  }
+
+  // ---------- KEEP: the camera's rules (OpenScreen's auto-zoom, on the beat grid) ----------
+  // Open on the screen whole; zoom on the click only, by 1.25, 1.5 or 1.8; each ramp lasts
+  // 0.6 s + 0.55 s × ln(zoom), rounded to the 1/12 s step; keep the click 12% in from the edges.
+  const ZOOMS = [1.8, 1.5, 1.25];
+  const ramp = (z) => Math.round((0.6 + 0.55 * Math.log(z)) / F) * F;
+  const plans = new Map(); // a shape's camera depends only on its frame and rects: work it out once
+  function plan() {
+    const key = `${set} ${W}x${H}`;
+    if (!plans.has(key)) plans.set(key, planFor());
+    return plans.get(key);
+  }
+  function planFor() {
+    const scr = SHOT.screen(), foc = SHOT.focus(), tg = SHOT.target(), pc = pressAt(tg), breath = 1 - 1 / 1.015;
+    // wide: the screen whole, with an 8% margin, its edges settled in gaps
+    const [wx0, wy0, kWide] = settle(...mid(scr), fitK(scr, 0.05, 0.05), breath), HW = W / 2 / kWide, HH = H / 2 / kWide;
+    // the view stays on the page: where the page is taller than the view, it never shows past an
+    // edge of it; where it is shorter, it starts at the page's top (no empty band above it)
+    const pg = cap(SHOT.page).rect, inPage = (c, half, lo, size) => (size >= 2 * half ? clamp(c, lo + half, lo + size - half) : lo + half);
+    const wx = inPage(wx0, HW, pg[0], pg[2]), wy = inPage(wy0, HH, pg[1], pg[3]);
+    // the zoom: the most of 1.25, 1.5, 1.8 at which the focus fits (92% of the view) and the
+    // captures stay sharp (scale × 1.15)
+    const sharp = Math.min(cap(SHOT.before).scale, cap(SHOT.after).scale) * 1.15;
+    const kTop = Math.min(W * 0.92 / foc[2], H * 0.92 / foc[3], sharp);
+    const z = ZOOMS.find((s) => kWide * s <= kTop) || ZOOMS[ZOOMS.length - 1];
+    // centred on the focus (or on the screen, on an axis where the whole screen fits); inside
+    // the wide view, with the click 12% or more in from every edge; then its edges settled in gaps
+    const toward = (a, size, half, s0, sSize) => (sSize <= 1.92 * half ? s0 + sSize / 2 : a + size / 2);
+    const keep = ([x, y, k]) => {
+      const hw = W / 2 / k, hh = H / 2 / k;
+      return [clamp(clamp(x, wx - HW + hw, wx + HW - hw), pc[0] - 0.76 * hw, pc[0] + 0.76 * hw),
+        clamp(clamp(y, wy - HH + hh, wy + HH - hh), pc[1] - 0.76 * hh, pc[1] + 0.76 * hh), k];
+    };
+    const k0 = kWide * z, start = keep([toward(foc[0], foc[2], W / 2 / k0, scr[0], scr[2]), toward(foc[1], foc[3], H / 2 / k0, scr[1], scr[3]), k0]);
+    const settled = settle(...start, breath), kept = keep(settled);
+    const [cx, cy, kZoom] = settled[2] <= sharp && Math.abs(kept[0] - settled[0]) < 0.5 && Math.abs(kept[1] - settled[1]) < 0.5 ? settled : start;
+    const r = ramp(z);
+    const keys = [
+      [0, wx, wy, kWide, 'cut'],
+      [T.zoom, wx, wy, kWide * 1.015, 'drift'],
+      [T.zoom + r, cx, cy, kZoom, 'move'],
+      [T.out, cx, cy, kZoom * 1.015, 'drift'],
+      [T.out + r, wx, wy, kWide, 'pull'],
+      [DURATION, wx, wy, kWide * 1.015, 'drift'],
+    ];
+    return { keys, kWide, kZoom, tg };
+  }
+
+  // ---------- KEEP: the optional caption beside the product, in a band ----------
+  // no caption: the screen, full frame. A caption: a band across the top, 20% of the height in
+  // every shape (in wide too, where the product film uses a column: the screen keeps the
+  // frame's whole width, so its result still reads in the zoom), in whole pixels
+  function layout() {
+    if (!V.caption.trim()) return { cap: null, view: [0, 0, W, H] };
+    const band = Math.round(H * 0.2);
+    return { cap: [0, 0, W, band], view: [0, band, W, H - band] };
+  }
+  function drawCaption(t, [x, y, w, h]) {
+    g.fillStyle = ACCENT; g.fillRect(x, y, w, h);
+    if (t < T.caption) return;
+    const pad = 8 * U, maxW = w - pad * 1.6;
+    // 5.6% of the short side; smaller only if a word or the lines won't fit
+    let size = 5.6 * U, lines;
+    for (;;) {
+      lines = wrap(g, V.caption, SANS(700), size, maxW);
+      const widest = Math.max(...lines.map((l) => widthOf(g, SANS(700), size, l)));
+      if ((widest <= maxW && capOf(size) + (lines.length - 1) * size * 1.08 <= h * 0.72) || size < 2.4 * U) break;
+      size *= 0.95;
+    }
+    const top = y + h / 2 - (capOf(size) + (lines.length - 1) * size * 1.08) / 2 + capOf(size);
+    lines.forEach((l, j) => line(g, l, x + pad, top + j * size * 1.08, SANS(700), size, t, T.caption + j * 3 * F, { colour: INK }));
+  }
+  // draw a scene inside part of the frame, as if that part were the whole frame
+  function inPart([x, y, w, h], draw) {
+    const fw = W, fh = H;
+    g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip(); g.translate(x, y); W = w; H = h;
+    try { draw(); } finally { W = fw; H = fh; g.restore(); }
+  }
+
+  // ============================== the shot ==============================
+  function scene(t) {
+    const { keys, kWide, kZoom, tg } = plan(), cam = camOn(keys, t);
+    g.fillStyle = PAPER; g.fillRect(0, 0, W, H);
+    g.imageSmoothingQuality = 'high';
+    const done = t >= T.click + 0.05; // the result, 0.05 s after the press
+    drawCap(g, cam, done && SHOT.pageAfter ? SHOT.pageAfter : SHOT.page);
+    drawCap(g, cam, done ? SHOT.after : SHOT.before);
+    // the cursor: in from the lower right, fast first and landing soft near the control; it
+    // rides the zoom, aims, presses on the beat, then steps off so the result reads
+    if (t < T.enter) return;
+    // it presses the control's lower right, so its label stays in view, and waits beside it
+    const press = pressAt(tg), near = [tg[0] + tg[2] * 1.35, tg[1] + tg[3] * 0.2];
+    // it starts just below the frame's bottom edge, right of the control, so its fast first
+    // stretch is on screen
+    const c0 = camOn(keys, T.enter), [px, py] = toFrame(c0, ...press);
+    const from = [c0.x + (lerp(px, W, 0.55) - W / 2) / c0.k, c0.y + (H + 0.2 * U - H / 2) / c0.k];
+    const ck = [
+      [T.enter, ...from], [T.enter + 12 * F, ...near], [T.aim, ...near],
+      [T.click - 2 * F, ...press], [T.click + 2 * F, ...press], [T.click + 8 * F, tg[0] + tg[2] * 1.12, tg[1] + tg[3] * 0.95],
+    ];
+    const zoomed = clamp(Math.log(cam.k / kWide) / Math.log(kZoom / kWide)), size = lerp(9.5, 12, zoomed) * U; // 9.5% of the short side wide, 12% close
+    // once in, the whole arrow stays 12 px inside the frame
+    const inside = (p, q) => (t < T.enter + 6 * F ? [p, q] : [Math.min(p, W - size * 0.82 - 12), Math.min(q, H - size * 1.12 - 12)]); // outline and shadow included
+    const [fx, fy] = inside(...toFrame(cam, ...cursorOn(ck, t))), [nx] = inside(...toFrame(cam, ...cursorOn(ck, t + F)));
+    drawCursor(g, fx, fy, size, (nx - fx) / F, t >= T.click && t < T.click + 2 * F);
+  }
+
+  // ---------- KEEP: drawing, loading; ADAPT: the cues ----------
+  function seek(t, values) {
+    V = { ...DEFAULTS, ...values };
+    shape = SHAPES[V.size] ? V.size : '16:9'; [W, H] = SHAPES[shape]; U = Math.min(W, H) / 100; tall = H > W; set = SCREENS[shape];
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+    g.reset();
+    t = clamp(t, 0, DURATION - 1e-6);
+    const L = layout();
+    inPart(L.view, () => scene(t));
+    if (L.cap) drawCaption(t, L.cap);
+    return canvas;
+  }
+  async function prepare() {
+    await loadFont('Instrument Sans', 'assets/fonts/instrument-sans-variable.ttf', { weight: '400 700', stretch: '75% 100%' });
+    for (const name of new Set(Object.values(SCREENS))) A.sets[name] = await (await fetch(`assets/${name}/screens.json`)).json();
+    const files = Object.entries(A.sets).flatMap(([name, m]) => Object.values(m.captures).map((c) => `assets/${name}/${c.file}`));
+    await Promise.all(files.map(async (f) => { A.img[f] = await loadImage(f); }));
+    for (const [name, m] of Object.entries(A.sets)) if (!A.gaps[name]) { const c = m.captures[SHOT.page]; A.gaps[name] = gapsOf({ img: A.img[`assets/${name}/${c.file}`], rect: c.rect }); }
+    await document.fonts.ready;
+  }
+
+  // sound: the kit on the cues, the bed on the grid, a breath before the click
+  function cues(values) {
+    V = { ...DEFAULTS, ...values };
+    const out = [], add = (t, type, gain, motion) => out.push({ t, type, gain, ...(motion ? { motion } : {}) });
+    // every sound on its visual onset; sweeps carry their camera travel (the engine needs it)
+    const travel = { kind: 'camera', travel: 0.35 };
+    if (V.caption.trim()) add(T.caption, 'pop', 0.42);
+    add(T.zoom, 'swish', 0.3, travel);
+    add(T.click, 'click', 0.65); add(T.click + 0.05, 'pop', 0.42); // the press, then the result
+    add(T.out, 'swish', 0.3, travel);
+    return out;
+  }
+  const music = {
+    bpm: BPM, duration: DURATION, root: 50, // D3, upward-voiced major chords
+    chords: [[0, 4, 7], [7, 11, 14], [9, 12, 16], [5, 9, 12]],
+    sections: [
+      { from: 0, to: 1, pad: 0.7, hats: 0.35 },
+      { from: 1, to: 3, kick: 0.85, hats: 0.6, clap: 0.4, bass: 0.75, pad: 0.5 },
+      { from: 3, to: 4, pad: 0.8, hats: 0.3 },
+    ],
+    breaks: [[at(1, 3), T.click]],
+  };
+  const STATES = [[0, 'Wide'], [T.zoom, 'Zoom in'], [T.click, 'Click'], [T.out, 'Zoom out']];
+  window.template = {
+    fps: FPS, duration: DURATION, sizes: SHAPES, width: W, height: H, defaults: () => ({ size: '16:9', ...DEFAULTS }), fields: FIELDS, states: STATES,
+    prepare, seek: (t, values) => seek(t, values), cues, music,
+    keyTimes: [0.25, 1.9, 3.45, 4.75, 7.2],
+    stress: { caption: { caption: 'Replay the step that failed.' }, 'caption-long': { caption: 'Maximum workflow momentum meani.' } },
+  };
+  const q = new URLSearchParams(location.search);
+  if (window.parent === window && !q.has('render')) prepare().then(() => { const t0 = performance.now(); const loop = () => { seek(((performance.now() - t0) / 1000) % DURATION, { size: q.get('size') || '16:9' }); requestAnimationFrame(loop); }; loop(); });
+})();
+</script>

@@ -1,0 +1,18 @@
+{
+  "name": "cursor-camera",
+  "description": "Make an 8-second proof shot for a launch video in square, wide and tall, with sound. The product's real screen, wide; a big cursor glides to one control and clicks it, the camera zooms in on the click, the screen changes to the real result and the camera pulls back out. Use when the user asks for a cursor zoom, an auto-zoom on a click, a click-to-result or feature clip, or a screen-recording-style demo shot of their product, app or website.",
+  "author": {
+    "name": "omnigami",
+    "url": "https://omnigami.ai"
+  },
+  "homepage": "https://omnigami.ai/skills/cursor-camera",
+  "repository": "https://github.com/omnigami-ai/cursor-camera",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "keywords": [
+    "video",
+    "launch video",
+    "product video",
+    "motion graphics",
+    "omnigami"
+  ]
+}

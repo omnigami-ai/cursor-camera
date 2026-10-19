@@ -1,0 +1,99 @@
+{
+ "url": "http://localhost:4413/lamplit/app/#/runs/4812",
+ "viewport": [
+  1440,
+  900
+ ],
+ "captures": {
+  "page": {
+   "file": "page@2.webp",
+   "scale": 2,
+   "rect": [
+    0,
+    0,
+    1440,
+    900
+   ]
+  },
+  "head": {
+   "file": "head@4.webp",
+   "scale": 4,
+   "rect": [
+    224,
+    44,
+    1216,
+    148
+   ]
+  },
+  "page-after": {
+   "file": "page-after@2.webp",
+   "scale": 2,
+   "rect": [
+    0,
+    0,
+    1440,
+    900
+   ]
+  },
+  "head-after": {
+   "file": "head-after@4.webp",
+   "scale": 4,
+   "rect": [
+    224,
+    44,
+    1216,
+    148
+   ]
+  }
+ },
+ "rects": {
+  "start": {
+   "page": [
+    0,
+    0,
+    1440,
+    900
+   ],
+   "head": [
+    248,
+    68,
+    1168,
+    100
+   ],
+   "replay": [
+    1177.38,
+    104,
+    198.63,
+    32
+   ],
+   "waterfall": [
+    248,
+    184,
+    848,
+    234
+   ]
+  },
+  "after": {
+   "page": [
+    0,
+    0,
+    1440,
+    900
+   ],
+   "head": [
+    248,
+    68,
+    1168,
+    100
+   ],
+   "replay": null,
+   "waterfall": [
+    248,
+    236,
+    848,
+    278
+   ]
+  }
+ },
+ "typed": {}
+}
