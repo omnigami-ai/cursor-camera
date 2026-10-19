@@ -12,7 +12,7 @@ In Claude Code:
 
 ```
 /plugin marketplace add omnigami-ai/skills
-/plugin install cursor-camera@omnigami
+/plugin install omnigami-cursor-camera@omnigami
 ```
 
 With the skills CLI, for Claude Code and other agents that read SKILL.md:
