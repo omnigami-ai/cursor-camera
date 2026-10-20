@@ -109,6 +109,8 @@ caption when there is one. The screen keeps its own colours.
   before the click.
 - Mastered around −14 LUFS.
 
+The score's sound is `music.style`: here `'synth'`, the default. For the user's product, pick by what it is: `'organic'` for plants, food and drink, and other natural or handmade things; `'synth'` (oscillators, the default) for software and tools; `'felt'` (a sparse felt piano over a sub bass and a light kit) for a quiet, minimal film. In a break (`music.breaks`) the drums, bass and lead stop and the chords play on; the film's name seeds the key (always major), the progressions and the patterns.
+
 ## Banned
 
 - A zoom with no click, or a click with no visible change.
