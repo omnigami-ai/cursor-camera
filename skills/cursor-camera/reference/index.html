@@ -1,0 +1,535 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lamplit · Cursor camera · Fictional company example</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1220; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+</style>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script src="kit.js"></script>
+<script>
+// Cursor camera: a short demo where the cursor is the star. The product's real screens, one task done through them
+// the way a person does it, and a camera carried by the cursor: it pushes in as the cursor sets off for a target and
+// pulls back when a page changes. 18 s on the 120 BPM grid, 60 fps, in wide, square and tall.
+// The reference is Lamplit (a fictional developer tool made for omnigami's examples, cast/lamplit/): from the Runs
+// page the cursor opens the failed run, scrolls its logs, selects the error, presses "Replay from write-ledger",
+// refreshes the replay's status and the replay succeeds. The screens are real captures, made by scripts/screens.mjs
+// from plans/desktop.json (wide, a 1440 × 900 window), plans/square.json (1080 × 1080) and plans/tall.json
+// (1080 × 1920): every state of the task, the app's own hover states, the logs whole (for the scroll) and the
+// selection.
+//
+//   KEEP   the grid, the shapes, the toolkit (type, cursor, camera, transitions), drawing, the cues' shape
+//   ADAPT  STATES and ACTS (captures and rects by name), the colours, the optional caption, the times
+(() => {
+  const { clamp, lerp, loadFont, loadImage } = window.kit;
+  const FPS = 60, F = 1 / 12, BPM = 120, BEAT = 60 / BPM, BAR = 4 * BEAT, DURATION = 9 * BAR;
+  const at = (bar, beat = 0) => bar * BAR + beat * BEAT; // a time on the beat grid
+  // each shape's frame, and the window its screens were captured in: wide shows the desktop window; square and tall
+  // a window of their own proportions (the product's phone layout, or for a desktop product like Lamplit its own
+  // narrower window), never a desktop page shrunk
+  const SHAPES = { '16:9': [1920, 1080], '1:1': [1440, 1440], '9:16': [1080, 1920] };
+  const SCREENS = { '16:9': 'screens', '1:1': 'screens-mobile', '9:16': 'screens-tall' };
+  let W = 1920, H = 1080, U = 10.8, set = 'screens', shape = '16:9'; // U: 1% of the frame's short side
+
+  const canvas = document.getElementById('c');
+  const g = canvas.getContext('2d', { willReadFrequently: true });
+
+  // ADAPT: the product's colours: its ground, its darkest ink (the cursor), its light text (the cursor's outline) and
+  // its brand colour, the accent (Lamplit's amber).
+  const PAPER = '#0E1220', INK = '#080B14', LIGHT = '#ECEAE3', ACCENT = '#FFB23F';
+  const SANS = (w) => (s) => `${w} ${s}px "Instrument Sans"`;
+
+  // ---------- ADAPT: the words ----------
+  // The shot reads best as the screens alone, full frame: the product's own words say what it is. A caption is
+  // optional; it takes a band across the top of the frame.
+  const DEFAULTS = { caption: '' };
+  const FIELDS = [
+    { id: 'caption', type: 'text', label: 'Caption (optional)', maxLength: 32, help: 'What the task does for the viewer, beside the screen. Empty: the screen fills the frame.' },
+  ];
+  let V = DEFAULTS; // set from seek's arguments on every frame
+
+  // ---------- ADAPT: the task, on the beat grid ----------
+  // The founder's pause rule (2026-10-22): the cursor hovers about 0.45 s on what it presses; a big move (a page
+  // change, a scroll) lands and holds a beat so the eye finds the next target; nothing waits on the product's own
+  // working (the replay running) and nothing is still for more than about 3 s. Every glide carries the camera.
+  const T = {
+    enter: 0.35,                     // the cursor fades in at rest over the table
+    toRow: at(0, 2), row: at(1, 1),  // it glides to the failed run (the camera pushes in with it), hovers, presses
+    nav1: at(1, 1) + 0.05,           // the run's page arrives; the camera pulls back to it whole
+    toLogs: at(2), scroll: at(2, 0.6), // a beat to look, then to the logs (pushing in), the scroll down them running
+                                     // with that glide, one move (begun after it, it read as an afterthought: the founder);
+                                     // then the cursor reads down the lines to the error, never parked
+    toSel: at(3, 1), drag: at(3, 3), dragEnd: at(4, 0.5), // a beat, then the error line, selected by a drag, and read
+    toReplay: at(4, 3), replay: at(5, 2), // up to "Replay from write-ledger" (the camera with it), hover, press
+    nav2: at(5, 2) + 0.05,           // the replay's page arrives, queued
+    toPill: at(6), pill: at(6, 2),   // a beat, then across to the status pill: pressed, it refreshes: running
+    adv1: at(6, 2) + 0.05,
+    done: at(7),                     // and it succeeds by itself (the product's work: no pause before it)
+    out: at(7) + 0.1,                // the camera pulls back to the whole page and holds on the result
+  };
+  // the pages in order, by capture name: the Runs page, the failed run, the replay queued, running, succeeded
+  const PAGES = ['runs', 'run', 'queued', 'running', 'succeeded'];
+
+  // ---------- KEEP: assets, the real screens for each shape ----------
+  const A = { sets: {}, img: {}, gaps: {} };
+  const cap = (name) => { const c = A.sets[set].captures[name]; return { img: A.img[`assets/${set}/${c.file}`], rect: c.rect, scale: c.scale }; };
+  const R = (state) => A.sets[set].rects[state];
+  const mid = ([x, y, w, h]) => [x + w / 2, y + h / 2];
+  const pad = ([x, y, w, h], px, py = px) => [x - px, y - py, w + 2 * px, h + 2 * py];
+  const union = (rects) => { const l = Math.min(...rects.map((r) => r[0])), t = Math.min(...rects.map((r) => r[1])); return [l, t, Math.max(...rects.map((r) => r[0] + r[2])) - l, Math.max(...rects.map((r) => r[1] + r[3])) - t]; };
+
+  // ---------- KEEP: gaps, so a settled view's edges fall between lines, never through words ----------
+  // Built once per capture in prepare(): for every row (and column) of CSS pixels, how many 8-px cells hold detail.
+  const CELL = 8;
+  function gapsOf(c) {
+    const [rx, ry, rw, rh] = c.rect, w = Math.ceil(rw), h = Math.ceil(rh), nx = Math.ceil(w / CELL), ny = Math.ceil(h / CELL);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const cx = cv.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(c.img, 0, 0, w, h);
+    const d = cx.getImageData(0, 0, w, h).data, L = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) L[i] = (d[i * 4] * 77 + d[i * 4 + 1] * 150 + d[i * 4 + 2] * 29) >> 8;
+    const rows = new Uint16Array(h * (nx + 1)), cols = new Uint16Array(w * (ny + 1));
+    for (let y = 0; y < h; y++) for (let b = 0; b < nx; b++) {
+      let lo = 255, hi = 0; for (let x = b * CELL; x < Math.min(w, b * CELL + CELL); x++) { const v = L[y * w + x]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      rows[y * (nx + 1) + b + 1] = rows[y * (nx + 1) + b] + (hi - lo > 24);
+    }
+    for (let x = 0; x < w; x++) for (let b = 0; b < ny; b++) {
+      let lo = 255, hi = 0; for (let y = b * CELL; y < Math.min(h, b * CELL + CELL); y++) { const v = L[y * w + x]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      cols[x * (ny + 1) + b + 1] = cols[x * (ny + 1) + b] + (hi - lo > 24);
+    }
+    return { rx, ry, w, h, nx, ny, rows, cols };
+  }
+  function plain(G, horizontal, a, b, lo, hi) {
+    const [n, size, run, off, offAcross] = horizontal ? [G.h, G.nx, G.rows, G.ry, G.rx] : [G.w, G.ny, G.cols, G.rx, G.ry];
+    const c0 = clamp(Math.floor((lo - offAcross) / CELL), 0, size), c1 = clamp(Math.floor((hi - offAcross) / CELL) + 1, 0, size);
+    const detail = (p) => (p < 0 || p >= n ? 0 : run[p * (size + 1) + c1] - run[p * (size + 1) + c0]);
+    const p0 = Math.floor(a - off) - 4, p1 = Math.ceil(b - off) + 4;
+    let base = Infinity;
+    for (let p = p0 - 48; p <= p1 + 48; p++) base = Math.min(base, detail(p));
+    for (let p = p0; p <= p1; p++) if (detail(p) > base) return false;
+    return true;
+  }
+  // settle a view (centre x, y; scale k) on a page so its edges fall in gaps: moved up to 10% of its size and scaled
+  // up to 4% either way. Unchanged when no such place is near.
+  function settle(page, x, y, k) {
+    const G = A.gaps[`${set} ${page}`], reach = 0.2, give = 1.04;
+    const edges = (c, half, lo, hi) => {
+      const r = Math.round(reach * half), first = [], last = [];
+      for (let d = -r; d <= r; d++) {
+        const e0 = Math.round(c - half + d), e1 = Math.round(c + half + d);
+        if (plain(G, true, e0, e0, lo, hi)) first.push(e0);
+        if (plain(G, true, e1, e1, lo, hi)) last.push(e1);
+      }
+      let best = null, score = Infinity;
+      for (const a of first) for (const z of last) {
+        const size = z - a, s = Math.abs(Math.log(size / (2 * half))) / Math.log(give) + Math.abs((a + z) / 2 - c) / (reach * half);
+        if (size >= 2 * half / give && size <= 2 * half * give && s < score) { score = s; best = [(a + z) / 2, size / 2]; }
+      }
+      return best;
+    };
+    const hw = W / 2 / k, hh = H / 2 / k, v = edges(y, hh, x - hw * give, x + hw * give);
+    if (v) { k = H / 2 / v[1]; y = v[0]; }
+    const half = W / 2 / k, top = y - H / 2 / k, bottom = y + H / 2 / k;
+    const sides = (c) => plain(G, false, c - half, c - half, top, bottom) && plain(G, false, c + half, c + half, top, bottom);
+    for (let d = 0; d <= Math.round(reach * half); d++) {
+      if (sides(x + d)) { x += d; break; }
+      if (sides(x - d)) { x -= d; break; }
+    }
+    return [x, y, k];
+  }
+
+  // ---------- KEEP: the toolkit. Type: words slam in and arrive in the accent ----------
+  const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a, b, p) => { const x = hex(a), y = hex(b); return `rgb(${x.map((v, i) => Math.round(lerp(v, y[i], clamp(p)))).join(',')})`; };
+  const steps = (t, t0) => (t - t0) / F;
+  const out3 = (p) => 1 - (1 - clamp(p)) ** 3;
+  const arrive = (t, t0, colour) => { const d = steps(t, t0); return d < 2.5 ? ACCENT : d < 5 ? mix(ACCENT, colour, 1 - (1 - (d - 2.5) / 2.5) ** 3) : colour; };
+  function setText(c, font, size, tracking = -0.03) { c.font = font(size); c.letterSpacing = `${tracking * size}px`; c.textBaseline = 'alphabetic'; }
+  const widthOf = (c, font, size, s, tracking) => { setText(c, font, size, tracking); return c.measureText(s).width; };
+  const capOf = (size) => size * 0.7;
+  function wrap(c, text, font, size, maxW, tracking) {
+    const lines = []; let cur = '';
+    for (const w of text.split(' ').filter(Boolean)) { const next = cur ? `${cur} ${w}` : w; if (cur && widthOf(c, font, size, next, tracking) > maxW) { lines.push(cur); cur = w; } else cur = next; }
+    return [...lines, cur];
+  }
+  function slam(c, s, x, y, font, size, t, t0, colour, tracking) {
+    const d = steps(t, t0);
+    if (d < 0) return;
+    const e = out3(d / 2.6), k = lerp(1.16, 1, e), blur = 10 * (1 - e) ** 2, alpha = lerp(0.55, 1, Math.sqrt(e));
+    setText(c, font, size, tracking);
+    const w = c.measureText(s).width;
+    c.save(); c.globalAlpha *= alpha; if (blur > 0.2) c.filter = `blur(${blur * U / 10}px)`;
+    c.translate(x + w / 2, y - capOf(size) / 2); c.scale(k, k);
+    c.fillStyle = colour; c.fillText(s, -w / 2, capOf(size) / 2); c.restore();
+  }
+  function line(c, text, x, y, font, size, t, t0, { colour = LIGHT, stagger = F, tracking } = {}) {
+    const words = text.split(' ').filter(Boolean), space = widthOf(c, font, size, ' ', tracking);
+    const widths = words.map((w) => widthOf(c, font, size, w, tracking));
+    let wx = x;
+    words.forEach((w, i) => { slam(c, w, wx, y, font, size, t, t0 + i * stagger, arrive(t, t0 + i * stagger, colour), tracking); wx += widths[i] + space; });
+  }
+
+  // ---------- KEEP: easing. Moves start straight off (a few frames' ramp, never a jolt) and settle on a long tail ----------
+  // glide(p): speed rising evenly over the first 10% of the move (a few frames: from rest, never more than doubling
+  // from one frame to the next), then falling as (1 − p)²: fast out, a soft landing. Tabulated once (deterministic).
+  // pull(p): a pull back, front-loaded the same way with a longer tail.
+  const table = (speed) => { const n = 600, acc = [0]; for (let i = 1; i <= n; i++) acc.push(acc[i - 1] + speed((i - 0.5) / n)); return (p) => { p = clamp(p); const f = p * n, i = Math.floor(f); return i >= n ? 1 : (acc[i] + (acc[i + 1] - acc[i]) * (f - i)) / acc[n]; }; };
+  const ramp = (p, a) => clamp(p / a);
+  const glide = table((p) => ramp(p, 0.12) * (1 - p) ** 2);
+  const pull = table((p) => ramp(p, 0.16) * (1 - p) ** 3);
+  const SCROLL_D = 1.4, scrolling = table((p) => Math.sin(Math.PI * p)); // the scroll: in and out smoothly, with the glide it rides
+  const read = table((p) => ramp(p, 0.1) * (1 - p) ** 0.6 * (0.5 + p)); // reading down the lines to the error: an even drift that lands on it, one move (a drift, then a glide, parked between)
+  const drag = table((p) => ramp(p, 0.15) * (1 - p) ** 1.2 + 0.0001); // a hand dragging: steadier, then slowing to the end
+
+  // ---------- KEEP: the cursor, big, with character ----------
+  // A black arrow with a white outline and a soft shadow; it tilts toward where it's going and shrinks while pressed.
+  const ARROW = (c) => { c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 46); c.lineTo(11, 35); c.lineTo(19, 53); c.lineTo(27, 49.5); c.lineTo(19, 32); c.lineTo(34, 32); c.closePath(); };
+  function drawCursor(c, x, y, size, vx, pressed, alpha) {
+    if (alpha <= 0) return;
+    const tilt = (-8 + clamp(vx / (W * 1.2), -1, 1) * 16) * Math.PI / 180, k = size / 53 * lerp(1, 0.84, pressed) * lerp(0.92, 1, alpha);
+    c.save(); c.globalAlpha *= alpha; c.translate(x, y); c.rotate(tilt); c.scale(k, k);
+    ARROW(c); c.shadowColor = 'rgba(0,0,0,0.28)'; c.shadowBlur = 12; c.shadowOffsetY = 5;
+    c.lineJoin = 'round'; c.lineWidth = 4.5; c.strokeStyle = LIGHT; c.stroke(); c.shadowColor = 'transparent';
+    c.fillStyle = INK; c.fill(); c.restore();
+  }
+
+  // ---------- KEEP: the page camera, and captures through it ----------
+  // A view is the page point at the frame's centre and a scale (frame px per CSS px); scale moves in log space.
+  const toFrame = (cam, x, y) => [(x - cam.x) * cam.k + W / 2, (y - cam.y) * cam.k + H / 2];
+  const blend = (a, b, p) => ({ x: lerp(a.x, b.x, p), y: lerp(a.y, b.y, p), k: Math.exp(lerp(Math.log(a.k), Math.log(b.k), p)) });
+  function drawCap(c, cam, name, a = 1) {
+    if (a <= 0) return;
+    const { img, rect: [x, y, w, h] } = cap(name), [fx, fy] = toFrame(cam, x, y);
+    c.save(); c.globalAlpha *= a; c.drawImage(img, fx, fy, w * cam.k, h * cam.k); c.restore();
+  }
+  // part of a capture (a page box, CSS px), drawn where it sits, moved dy CSS px, at alpha a
+  function drawBox(c, cam, name, [bx, by, bw, bh], dy = 0, a = 1, at = null) {
+    if (a <= 0 || bw <= 0 || bh <= 0) return;
+    const { img, rect: [x, y], scale } = cap(name), [fx, fy] = toFrame(cam, at ? at[0] : bx, (at ? at[1] : by) + dy);
+    c.save(); c.globalAlpha *= a;
+    c.drawImage(img, (bx - x) * scale, (by - y) * scale, bw * scale, bh * scale, fx, fy, bw * cam.k, bh * cam.k);
+    c.restore();
+  }
+  function fillBox(c, cam, [bx, by, bw, bh], colour) { const [fx, fy] = toFrame(cam, bx, by); c.fillStyle = colour; c.fillRect(fx, fy, bw * cam.k, bh * cam.k); }
+  function clipBox(c, cam, [bx, by, bw, bh], r = 0) { const [fx, fy] = toFrame(cam, bx, by); c.beginPath(); c.roundRect(fx, fy, bw * cam.k, bh * cam.k, r * cam.k); c.clip(); }
+  // a capture's colour at a page point, for covering what changes with its own ground
+  const SAMPLE = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const colours = new Map();
+  function colourAt(name, px, py) {
+    const key = `${set} ${name} ${px} ${py}`;
+    if (!colours.has(key)) {
+      const { img, rect: [x, y], scale } = cap(name);
+      SAMPLE.clearRect(0, 0, 1, 1); SAMPLE.drawImage(img, (px - x) * scale, (py - y) * scale, 1, 1, 0, 0, 1, 1);
+      const [r, gg, b] = SAMPLE.getImageData(0, 0, 1, 1).data; colours.set(key, `rgb(${r},${gg},${b})`);
+    }
+    return colours.get(key);
+  }
+
+  // ---------- KEEP: the camera's views ----------
+  // wide: the page whole, covering the frame (a window wider than the frame loses a little of its sides, a taller
+  // one a little of its foot), its edges settled in gaps. zoom: a box of the page, whole, with 4% to spare, at the
+  // most the captures stay sharp at (their scale × 1.15) and never less than wide; inside the page; edges in gaps.
+  const SHARP = 1.15;
+  function wide(page) {
+    const [, , pw, ph] = cap(page).rect, k = Math.max(W / pw, H / ph), hw = W / 2 / k, hh = H / 2 / k;
+    const [x, y, k2] = settle(page, pw / 2, hh, k); // from the top: the app's own bar always whole
+    return inside(page, { x, y, k: Math.max(k, k2) });
+  }
+  function zoom(page, box, most = Infinity) {
+    const [, , pw, ph] = cap(page).rect, kw = Math.max(W / pw, H / ph);
+    const k = clamp(Math.min(W * 0.92 / box[2], H * 0.92 / box[3], cap(page).scale * SHARP, most), kw, Infinity);
+    const [cx, cy] = mid(box), s = settle(page, cx, cy, k);
+    return inside(page, { x: s[0], y: s[1], k: Math.max(kw, s[2]) });
+  }
+  // a view never shows past the page's edges
+  function inside(page, v) {
+    const [, , pw, ph] = cap(page).rect, hw = W / 2 / v.k, hh = H / 2 / v.k;
+    return { x: pw <= 2 * hw ? pw / 2 : clamp(v.x, hw, pw - hw), y: ph <= 2 * hh ? hh : clamp(v.y, hh, ph - hh), k: v.k };
+  }
+
+  // ---------- ADAPT: the plan of the shot, from the captures' rects (every shape gets its own from the same names) ----------
+  const plans = new Map();
+  function plan() {
+    const key = `${set} ${W}x${H}`;
+    if (!plans.has(key)) plans.set(key, planFor());
+    return plans.get(key);
+  }
+  function planFor() {
+    const runs = R('runs'), run = R('run'), all = R('logs-all'), q = R('queued'), rn = R('running');
+    const row = runs.row, body = run.logbody;
+    // the scroll: as far as the logs go past their panel (none where the window shows them whole)
+    const S = Math.max(0, Math.round(all.logbody[3] - body[3]));
+    const sel = [run.sel[0], run.sel[1] - S, run.sel[2], run.sel[3]];
+    const pill = q.pill, replay = run.replay, head = run.head;
+    // the views
+    const v = {
+      runs: wide('runs'),
+      row: zoom('runs', [row[0], row[1] - row[3] * 3, row[2] * 0.62, row[3] * 6.5]),
+      run: wide('run'),
+      logs: zoom('run', pad(body, 8)),
+      sel: zoom('run', [sel[0] - 120, sel[1] - 110, sel[2] + 360, 240]),
+      replay: zoom('run', [head[0] + head[2] * 0.3, head[1] - 12, head[2] * 0.7, head[3] + 60]),
+      pill: zoom('queued', [q.head[0], q.head[1] - 12, q.head[2] * 0.62, q.head[3] + 70]),
+      running: zoom('running', union([rn.head, rn.outcome || rn.head, rn.waterfall])),
+      done: wide('succeeded'),
+    };
+    // the camera rides the scroll: while the lines move up, the view drifts up a third as far with them
+    v.ride = S > 0 ? { ...v.logs, y: v.logs.y - S / 3 } : blend(v.logs, v.sel, 0.3); // (nothing to scroll: it eases toward the error)
+    // where the cursor goes, in page px: a rest over the table; the failed run's name; the logs; across the error;
+    // the button's lower right (its label stays in view); off it; the status pill's right; off it
+    const P = {
+      rest: [runs.table[0] + runs.table[2] * 0.64, row[1] + row[3] * 3.5],
+      row: [row[0] + Math.min(200, row[2] * 0.24), row[1] + row[3] * 0.6],
+      logs: [body[0] + body[2] * 0.62, body[1] + Math.min(body[3], 400) * 0.45],
+      read: [(body[0] + body[2] * 0.62 + sel[0]) / 2 + 30, sel[1] - 36], // down the lines, just above the error
+      selA: [sel[0] - 1, sel[1] + sel[3] * 0.62], selB: [sel[0] + sel[2] + 1, sel[1] + sel[3] * 0.62],
+      replay: [replay[0] + replay[2] * 0.8, replay[1] + replay[3] * 0.76],
+      pill: [pill[0] + pill[2] * 0.78, pill[1] + pill[3] * 0.74],
+      off2: [pill[0] + pill[2] * 1.15, pill[1] + pill[3] * 3.2],
+      // and aside, as the camera pulls back: right of the outcome's words, clear of the result
+      end: [(rn.outcome || rn.head)[0] + (rn.outcome || rn.head)[2] * 0.84, (rn.outcome || rn.head)[1] + (rn.outcome || rn.head)[3] * 2.4],
+    };
+    // the camera: [from t, to t, view, ease]; between moves it holds still
+    const C = [
+      [T.toRow, T.toRow + 1, v.row, glide],
+      [T.nav1 + 0.05, T.nav1 + 0.95, v.run, pull],
+      [T.toLogs, T.toLogs + 1, v.logs, glide],
+      [T.scroll, T.scroll + SCROLL_D, v.ride, scrolling],
+      [T.toSel, T.toSel + 0.5, v.sel, glide],
+      [T.toReplay, T.toReplay + 1, v.replay, glide],
+      [T.toPill, T.toPill + 0.6, v.pill, glide],
+      [T.adv1 + 0.1, T.adv1 + 0.9, v.running, glide],
+      [T.out, T.out + 0.9, v.done, pull],
+    ];
+    // the cursor: [from t, to t, to point, ease, arc (a share of the distance, bowing to the right of the path)]
+    const K = [
+      [T.toRow, T.toRow + 1, P.row, glide, 0.12],
+      [T.toLogs, T.toLogs + 1, P.logs, glide, -0.1],
+      [T.toLogs + 1.05, T.toSel + 0.5, P.selA, read, 0.06],
+      [T.drag, T.dragEnd, P.selB, drag, 0],
+      [T.toReplay, T.toReplay + 1, P.replay, glide, 0.14],
+      [T.toPill, T.toPill + 0.6, P.pill, glide, -0.08],
+      [T.pill + 0.17, T.pill + 0.67, P.off2, glide, 0.1],
+      [T.out, T.out + 0.9, P.end, glide, -0.1],
+    ];
+    return { v, P, C, K, S, sel };
+  }
+  function camAt(p, t) {
+    let cam = p.v.runs;
+    for (const [t0, t1, view, ease] of p.C) {
+      if (t <= t0) break;
+      cam = t >= t1 ? view : blend(cam, view, ease((t - t0) / (t1 - t0)));
+    }
+    return cam;
+  }
+  function cursorAt(p, t) {
+    let pt = p.P.rest;
+    for (const [t0, t1, to, ease, arc] of p.K) {
+      if (t <= t0) break;
+      if (t >= t1) { pt = to; continue; }
+      const e = ease((t - t0) / (t1 - t0)), [ax, ay] = pt, [bx, by] = to, dx = bx - ax, dy = by - ay;
+      // a gentle arc: the path bows sideways by `arc` of its length at its middle (a quadratic curve)
+      const cx = (ax + bx) / 2 - dy * arc, cy = (ay + by) / 2 + dx * arc;
+      pt = [(1 - e) ** 2 * ax + 2 * (1 - e) * e * cx + e * e * bx, (1 - e) ** 2 * ay + 2 * (1 - e) * e * cy + e * e * by];
+      break;
+    }
+    return pt;
+  }
+
+  // ---------- KEEP: the app's own motion between states ----------
+  const ease = (p) => 1 - (1 - clamp(p)) ** 3;
+  // a hover: the app's hover state (captured), easing on in 0.1 s as the cursor arrives and off as it leaves
+  const hoverAt = (t, on, off) => clamp((t - on) / 0.1) * (1 - clamp((t - off) / 0.12));
+  // a press: down on the beat in 0.05 s, back over 0.22 s
+  const pressAt = (t, tc) => (t < tc ? 0 : t < tc + 0.05 ? ease((t - tc) / 0.05) : 1 - ease((t - tc - 0.05) / 0.22));
+  // a page change: the old page's content goes (a lift and a fade, 5 frames); the new one comes as it goes, from the
+  // second frame, its parts a frame apart from where the click was outward (a rise and a fade, 9 frames), so what the
+  // eye is on is never empty and nothing swaps in one frame
+  const changeLength = (b) => (1 + R(b).panels.length + 9) / 60;
+  function pageChange(c, cam, a, b, t, t0, drawOld, from) {
+    const u = t - t0, rb = R(b), main = rb.main, out = ease(u / (5 / 60));
+    drawCap(c, cam, b);
+    if (u >= changeLength(b)) return;
+    fillBox(c, cam, main, colourAt(b, main[0] + 6, main[1] + 6));
+    if (out < 1) { c.save(); clipBox(c, cam, main); drawOld(-4 * out, 1 - out); c.restore(); }
+    const far = (r) => { const [x, y] = mid(r); return Math.hypot(x - from[0], y - from[1]); };
+    const parts = [rb.head, ...rb.panels].sort((p, q) => far(p) - far(q));
+    parts.forEach((r, i) => { const p = ease((u - (1 + i) / 60) / (9 / 60)); drawBox(c, cam, b, pad(r, 2), 6 * (1 - p), p); });
+  }
+  // a state change on the same page: what changes rolls over (the status pill and everything after it in the header,
+  // the line of facts under it, the outcome line: the old up and out as the new comes up and in, never both at full and
+  // never neither; a crossfade there showed both words at once); the rest eases across in 8 frames
+  function stateChange(c, cam, a, b, t, t0) {
+    const u = t - t0, ra = R(a), rb = R(b), x = ease(u / (8 / 60));
+    drawCap(c, cam, b); drawCap(c, cam, a, 1 - x);
+    const pa = ra.pill, head = ra.head, line = [pa[0] - 4, pa[1] - 4, head[0] + head[2] - pa[0] + 8, pa[3] + 8];
+    const top = pa[1] + pa[3] + 6, facts = [head[0] - 4, top, head[2] + 8, head[1] + head[3] - top];
+    const rolls = [line, facts, ...(ra.outcome && rb.outcome ? [pad(union([ra.outcome, rb.outcome]), 2)] : [])];
+    const pOut = ease(u / (6 / 60)), pIn = ease((u - 2 / 60) / (9 / 60)); // the new comes in as the old goes: never a frame without either
+    if (pIn >= 1) return;
+    for (const r of rolls) {
+      c.save(); clipBox(c, cam, r); fillBox(c, cam, r, colourAt(b, r[0] + 2, r[1] + 2));
+      drawBox(c, cam, a, r, -8 * pOut, 1 - pOut); drawBox(c, cam, b, r, 8 * (1 - pIn), pIn);
+      c.restore();
+    }
+  }
+
+  // ---------- KEEP: the optional caption beside the product, in a band ----------
+  function layout() {
+    if (!V.caption.trim()) return { cap: null, view: [0, 0, W, H] };
+    const band = Math.round(H * 0.2);
+    return { cap: [0, 0, W, band], view: [0, band, W, H - band] };
+  }
+  function drawCaption(t, [x, y, w, h]) {
+    g.fillStyle = ACCENT; g.fillRect(x, y, w, h);
+    if (t < 0.5) return;
+    const padX = 8 * U, maxW = w - padX * 1.6;
+    let size = 5.6 * U, lines;
+    for (;;) {
+      lines = wrap(g, V.caption, SANS(700), size, maxW);
+      const widest = Math.max(...lines.map((l) => widthOf(g, SANS(700), size, l)));
+      if ((widest <= maxW && capOf(size) + (lines.length - 1) * size * 1.08 <= h * 0.72) || size < 2.4 * U) break;
+      size *= 0.95;
+    }
+    const top = y + h / 2 - (capOf(size) + (lines.length - 1) * size * 1.08) / 2 + capOf(size);
+    lines.forEach((l, j) => line(g, l, x + padX, top + j * size * 1.08, SANS(700), size, t, 0.5 + j * 3 * F, { colour: INK }));
+  }
+  function inPart([x, y, w, h], draw) {
+    const fw = W, fh = H;
+    g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip(); g.translate(x, y); W = w; H = h;
+    try { draw(); } finally { W = fw; H = fh; g.restore(); }
+  }
+
+  // ============================== the shot ==============================
+  function scene(t) {
+    const p = plan(), cam = camAt(p, t), run = R('run'), runs = R('runs');
+    g.fillStyle = PAPER; g.fillRect(0, 0, W, H);
+    g.imageSmoothingQuality = 'high';
+    // the Runs page: the failed run's row lights as the cursor reaches it, and presses on the beat
+    const runsPage = (dy = 0, a = 1) => {
+      drawBox(g, cam, 'runs', cap('runs').rect, dy, a);
+      const row = runs.row, h = hoverAt(t, T.toRow + 0.85, Infinity), pr = pressAt(t, T.row);
+      if (h > 0) drawBox(g, cam, 'row-hover', cap('row-hover').rect, dy, a * h);
+      if (pr > 0) { c2(() => { const [fx, fy] = toFrame(cam, row[0], row[1] + dy); g.globalAlpha *= a; g.fillStyle = `rgba(255,255,255,${0.07 * pr})`; g.fillRect(fx, fy, row[2] * cam.k, row[3] * cam.k); }); }
+    };
+    // the failed run's page: its logs scrolled, the error selected, the replay button lit, then pressed
+    const runPage = (dy = 0, a = 1) => {
+      drawBox(g, cam, 'run', cap('run').rect, dy, a);
+      const s = p.S * scrolling((t - T.scroll) / SCROLL_D), sel = clamp((t - T.drag) / (T.dragEnd - T.drag));
+      if (t >= T.scroll && p.S > 0 || sel > 0) {
+        const body = run.logbody, strip = cap('logs-all').rect;
+        c2(() => {
+          clipBox(g, cam, [body[0], body[1] + dy, body[2], body[3]]); g.globalAlpha *= a;
+          drawBox(g, cam, 'logs-all', strip, 0, 1, [body[0], body[1] - s + dy]);
+          if (sel > 0) {
+            // the selection grows with the drag, a character at a time (mono: equal widths)
+            const r = R('logs-all').sel, n = 35, xs = cursorAt(p, t)[0] - r[0], w = clamp(Math.round(xs / (r[2] / n)), 0, n) * (r[2] / n);
+            const box = [r[0] - 1, r[1] - 2, w + 1, r[3] + 4];
+            drawBox(g, cam, 'logs-all-sel', box, 0, 1, [body[0] + (box[0] - strip[0]), body[1] - s + (box[1] - strip[1]) + dy]);
+          }
+        });
+      }
+      const rp = run.replay, h = hoverAt(t, T.toReplay + 0.85, T.nav2), pr = pressAt(t, T.replay);
+      if (h > 0 || pr > 0) c2(() => {
+        g.globalAlpha *= a; const [cx, cy] = toFrame(cam, rp[0] + rp[2] / 2, rp[1] + rp[3] / 2 + dy), k = 1 - 0.05 * pr;
+        fillBox(g, { ...cam, y: cam.y - dy }, pad(rp, 2), colourAt('run', rp[0] - 6, rp[1] + rp[3] / 2));
+        g.translate(cx, cy); g.scale(k, k); g.translate(-cx, -cy);
+        drawBox(g, cam, 'run', rp, dy); drawBox(g, cam, 'replay-hover', cap('replay-hover').rect, dy, h);
+        if (pr > 0) { const [fx, fy] = toFrame(cam, rp[0], rp[1] + dy); g.fillStyle = `rgba(0,0,0,${0.16 * pr})`; g.beginPath(); g.roundRect(fx, fy, rp[2] * cam.k, rp[3] * cam.k, 7 * cam.k); g.fill(); }
+      });
+    };
+    // the replay's page: the status pill pressed (it refreshes the status)
+    const pillPress = () => {
+      const pl = R('queued').pill, pr = pressAt(t, T.pill);
+      if (pr <= 0 || t >= T.adv1) return;
+      c2(() => {
+        const [cx, cy] = toFrame(cam, pl[0] + pl[2] / 2, pl[1] + pl[3] / 2), k = 1 - 0.05 * pr;
+        fillBox(g, cam, pad(pl, 2), colourAt('queued', pl[0] - 6, pl[1] + pl[3] / 2));
+        g.translate(cx, cy); g.scale(k, k); g.translate(-cx, -cy);
+        drawBox(g, cam, 'queued', pl);
+        const [fx, fy] = toFrame(cam, pl[0], pl[1]); g.fillStyle = `rgba(255,255,255,${0.1 * pr})`; g.beginPath(); g.roundRect(fx, fy, pl[2] * cam.k, pl[3] * cam.k, pl[3] / 2 * cam.k); g.fill();
+      });
+    };
+    if (t < T.nav1) runsPage();
+    else if (t < T.nav2) {
+      if (t < T.nav1 + changeLength('run')) pageChange(g, cam, 'runs', 'run', t, T.nav1, (dy, a) => runsPage(dy, a), p.P.row);
+      else runPage();
+    } else if (t < T.adv1) {
+      if (t < T.nav2 + changeLength('queued')) pageChange(g, cam, 'run', 'queued', t, T.nav2, (dy, a) => runPage(dy, a), p.P.replay);
+      else { drawCap(g, cam, 'queued'); pillPress(); }
+    } else if (t < T.done) stateChange(g, cam, 'queued', 'running', t, T.adv1);
+    else stateChange(g, cam, 'running', 'succeeded', t, T.done);
+    // the cursor: it fades in at rest, glides on arcs, presses on the beat and holds down through the drag
+    const [px, py] = cursorAt(p, t), [fx, fy] = toFrame(cam, px, py), [nx] = toFrame(camAt(p, t + F), ...cursorAt(p, t + F));
+    const zoomed = clamp(Math.log(cam.k / p.v.runs.k) / Math.log(cap('run').scale * SHARP / p.v.runs.k)), size = lerp(9.5, 12, zoomed) * U;
+    // pressed: down to 84% in 3 frames on the beat, held a step, back over 9 frames (never a one-frame change of size);
+    // through the drag it stays down and lets go over 7 frames as the drag ends
+    const tap = (tc) => (t < tc ? 0 : t < tc + 0.05 ? ease((t - tc) / 0.05) : 1 - ease((t - tc - F) / 0.15));
+    const held = Math.max(...[T.row, T.replay, T.pill].map(tap), clamp((t - T.drag) / 0.05) * (1 - ease((t - T.dragEnd) / 0.12)));
+    drawCursor(g, fx, fy, size, (nx - fx) / F, held, ease((t - T.enter) / 0.4));
+  }
+  const c2 = (fn) => { g.save(); try { fn(); } finally { g.restore(); } };
+
+  // ---------- KEEP: drawing, loading; ADAPT: the cues ----------
+  function seek(t, values) {
+    V = { ...DEFAULTS, ...values };
+    shape = SHAPES[V.size] ? V.size : '16:9'; [W, H] = SHAPES[shape]; U = Math.min(W, H) / 100; set = SCREENS[shape];
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+    g.reset();
+    t = clamp(t, 0, DURATION - 1e-6);
+    const L = layout();
+    inPart(L.view, () => scene(t));
+    if (L.cap) drawCaption(t, L.cap);
+    return canvas;
+  }
+  async function prepare() {
+    await loadFont('Instrument Sans', 'assets/fonts/instrument-sans-variable.ttf', { weight: '400 700', stretch: '75% 100%' });
+    for (const name of new Set(Object.values(SCREENS))) if (!A.sets[name]) A.sets[name] = await (await fetch(`assets/${name}/screens.json`)).json();
+    const files = Object.entries(A.sets).flatMap(([name, m]) => Object.values(m.captures).map((c) => `assets/${name}/${c.file}`));
+    await Promise.all(files.map(async (f) => { if (!A.img[f]) A.img[f] = await loadImage(f); }));
+    for (const [name, m] of Object.entries(A.sets)) for (const page of PAGES) if (!A.gaps[`${name} ${page}`]) {
+      const c = m.captures[page]; A.gaps[`${name} ${page}`] = gapsOf({ img: A.img[`assets/${name}/${c.file}`], rect: c.rect });
+    }
+    await document.fonts.ready;
+  }
+
+  // sound, each on its visual onset: a soft swish as the camera sets off with the cursor (carrying its travel), a click
+  // on every press, a pop as the page or state it opens arrives, ticks as the logs scroll and as the selection grows
+  function cues(values) {
+    V = { ...DEFAULTS, ...values };
+    const out = [], add = (t, type, gain, motion) => out.push({ t, type, gain, ...(motion ? { motion } : {}) });
+    const travel = { kind: 'camera', travel: 0.3 };
+    if (V.caption.trim()) add(0.5, 'pop', 0.42);
+    for (const tm of [T.toRow, T.toLogs, T.toReplay, T.toPill]) add(tm, 'swish', 0.22, travel);
+    for (const tc of [T.row, T.drag, T.replay, T.pill]) add(tc, 'click', 0.6);
+    for (const tp of [T.nav1, T.nav2, T.adv1]) add(tp + 0.03, 'pop', 0.36);
+    add(T.scroll + 0.1, 'tick', 0.3); add(T.scroll + 0.22, 'tick', 0.24); add(T.scroll + 0.4, 'tick', 0.18);
+    add(T.done, 'chime', 0.5); add(T.out, 'swish', 0.22, travel);
+    return out.sort((a, b) => a.t - b.t);
+  }
+  // the 120 BPM bed: pad and hats while the cursor finds the run, the full groove from the run's page to the success,
+  // then pad and hats under the result; a breath (drums out) in the beat before the replay is pressed
+  const music = {
+    bpm: BPM, duration: DURATION, root: 50,
+    chords: [[0, 4, 7], [7, 11, 14], [9, 12, 16], [5, 9, 12]],
+    sections: [
+      { from: 0, to: 1, pad: 0.7, hats: 0.35 },
+      { from: 1, to: 7, kick: 0.85, hats: 0.6, clap: 0.4, bass: 0.75, pad: 0.5 },
+      { from: 7, to: 9, pad: 0.8, hats: 0.3 },
+    ],
+    breaks: [[T.replay - BEAT, T.replay]],
+  };
+  const STATES = [[0, 'Runs'], [T.nav1, 'The failed run'], [T.scroll, 'Logs'], [T.drag, 'The error'], [T.nav2, 'Replay queued'], [T.adv1, 'Running'], [T.done, 'Succeeded']];
+  window.template = {
+    fps: FPS, duration: DURATION, sizes: SHAPES, width: W, height: H, defaults: () => ({ size: '16:9', ...DEFAULTS }), fields: FIELDS, states: STATES,
+    prepare, seek: (t, values) => seek(t, values), cues, music,
+    // settled moments: the Runs page, the row lit, the run's page, the logs scrolled, the error selected, the button
+    // lit, the replay queued, running, and the result
+    keyTimes: [0.9, 2.3, 3.9, 6.4, 9.0, 10.9, 12.9, 13.9, 17.5],
+    stress: { caption: { caption: 'Replay the step that failed.' }, 'caption-long': { caption: 'Maximum workflow momentum meani.' } },
+  };
+  const q = new URLSearchParams(location.search);
+  if (window.parent === window && !q.has('render')) prepare().then(() => { const t0 = performance.now(); const loop = () => { seek(((performance.now() - t0) / 1000) % DURATION, { size: q.get('size') || '16:9' }); requestAnimationFrame(loop); }; loop(); });
+})();
+</script>

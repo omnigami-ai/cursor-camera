@@ -1,0 +1,184 @@
+{
+ "url": "http://localhost:8891/lamplit/app/#/runs",
+ "viewport": [
+  1080,
+  1920
+ ],
+ "ready": "[data-ready]",
+ "init": "(() => { const add = []; for (const sh of document.styleSheets) { let rules; try { rules = sh.cssRules; } catch { continue; } for (const r of rules) if (r.selectorText && r.selectorText.includes(':hover')) add.push([sh, r.cssText.replace(/:hover/g, '.hov')]); } for (const [sh, t] of add) sh.insertRule(t, sh.cssRules.length); })()",
+ "rects": {
+  "main": ".main",
+  "row": "a.tr[data-run=\"4812\"]",
+  "table": "[data-panel=\"runs-table\"]",
+  "timeline": "[data-panel=\"timeline\"]",
+  "pagehead": ".page-head",
+  "head": ".run-head",
+  "replay": "[data-action=\"replay-from-step\"]",
+  "logs": "[data-panel=\"logs\"]",
+  "logbody": ".log-body",
+  "waterfall": "[data-panel=\"waterfall\"]",
+  "panels": ".main [data-panel]*",
+  "sel": "[data-sel]",
+  "err": ".ll.err",
+  "pill": "[data-action=\"replay-advance\"]",
+  "aside": ".aside",
+  "outcome": "[data-outcome]",
+  "side": ".side",
+  "rows": ".main a.tr*"
+ },
+ "steps": [
+  {
+   "tap": [
+    800,
+    24
+   ],
+   "settle": 300
+  },
+  {
+   "rects": "runs"
+  },
+  {
+   "capture": "runs",
+   "full": true,
+   "scale": 2
+  },
+  {
+   "eval": "document.querySelector('a.tr[data-run=\"4812\"]').classList.add('hov')"
+  },
+  {
+   "capture": "row-hover",
+   "around": "a.tr[data-run=\"4812\"]",
+   "pad": 2,
+   "scale": 2
+  },
+  {
+   "eval": "document.querySelector('a.tr[data-run=\"4812\"]').classList.remove('hov')"
+  },
+  {
+   "click": "a.tr[data-run=\"4812\"]"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "tap": [
+    800,
+    24
+   ],
+   "settle": 300
+  },
+  {
+   "eval": "(() => { const m = document.querySelector('.ll.err .msg'); const t = m.firstChild; const r = t.splitText(35); const s = document.createElement('span'); s.dataset.sel = ''; s.textContent = t.textContent; m.replaceChild(s, t); })()"
+  },
+  {
+   "rects": "run"
+  },
+  {
+   "capture": "run",
+   "full": true,
+   "scale": 2
+  },
+  {
+   "eval": "document.querySelector('[data-action=\"replay-from-step\"]').classList.add('hov')"
+  },
+  {
+   "capture": "replay-hover",
+   "around": "[data-action=\"replay-from-step\"]",
+   "pad": 2,
+   "scale": 2
+  },
+  {
+   "eval": "document.querySelector('[data-action=\"replay-from-step\"]').classList.remove('hov')"
+  },
+  {
+   "eval": "(() => { const b = document.querySelector('.log-body'); b.style.flex = 'none'; b.style.height = b.scrollHeight + 'px'; b.style.overflow = 'visible'; b.closest('.panel').style.overflow = 'visible'; })()"
+  },
+  {
+   "wait": 200
+  },
+  {
+   "rects": "logs-all"
+  },
+  {
+   "capture": "logs-all",
+   "around": ".log-body",
+   "pad": 0,
+   "scale": 2
+  },
+  {
+   "eval": "(() => { const s = document.querySelector('[data-sel]'); const r = document.createRange(); r.selectNodeContents(s); const g = getSelection(); g.removeAllRanges(); g.addRange(r); })()"
+  },
+  {
+   "capture": "logs-all-sel",
+   "around": ".log-body",
+   "pad": 0,
+   "scale": 2
+  },
+  {
+   "eval": "getSelection().removeAllRanges()"
+  },
+  {
+   "click": "[data-action=\"replay-from-step\"]"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "tap": [
+    800,
+    24
+   ],
+   "settle": 300
+  },
+  {
+   "rects": "queued"
+  },
+  {
+   "capture": "queued",
+   "full": true,
+   "scale": 2
+  },
+  {
+   "click": "[data-action=\"replay-advance\"]"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "tap": [
+    800,
+    24
+   ],
+   "settle": 300
+  },
+  {
+   "rects": "running"
+  },
+  {
+   "capture": "running",
+   "full": true,
+   "scale": 2
+  },
+  {
+   "click": "[data-action=\"replay-advance\"]"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "tap": [
+    800,
+    24
+   ],
+   "settle": 300
+  },
+  {
+   "rects": "succeeded"
+  },
+  {
+   "capture": "succeeded",
+   "full": true,
+   "scale": 2
+  }
+ ]
+}
