@@ -2,7 +2,7 @@
 
 Your real screens, a cursor and a camera that follows it.
 
-An 18-second demo of one real task on your product’s real screens. A big cursor glides between targets, lights what it hovers, clicks, scrolls and drags a selection, and the camera it carries pushes in and pulls back with it, ending on the real result.
+A demo of one real task on your product’s real screens. A big cursor glides between targets, lights what it hovers, clicks, scrolls and drags a selection, and the camera it carries pushes in and pulls back with it, ending on the real result.
 
 Watch it play live, and change its words, at [omnigami.ai/skills/cursor-camera](https://omnigami.ai/skills/cursor-camera).
 

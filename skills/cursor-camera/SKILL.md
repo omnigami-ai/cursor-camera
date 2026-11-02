@@ -5,6 +5,8 @@ description: Make an 18-second cursor-led demo for a launch video in square, wid
 
 # Cursor camera
 
+For Japanese, Korean or Chinese product pages, keep the copy in that language and set the film’s `lang` to the page’s `<html lang>`; bundled Noto faces and phrase breaks handle the text.
+
 A short demo where the cursor is the star: one real task, done through the
 product's real screens the way a person does it. The big cursor glides between
 targets on gentle arcs, lights what it hovers, presses on the beat, scrolls and
