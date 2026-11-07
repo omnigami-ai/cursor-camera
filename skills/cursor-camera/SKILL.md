@@ -1,6 +1,9 @@
 ---
 name: cursor-camera
-description: Make an 18-second cursor-led demo for a launch video in square, wide and tall, with sound. One real task on the product's real screens, the way a person does it: a big cursor glides between targets, hovers, clicks, scrolls and drags a selection, and the camera it carries pushes in and pulls back with it, ending on the real result. Use when the user asks for a cursor zoom, an auto-zoom demo, a screen-recording-style walkthrough or a feature clip of their product, app or website.
+description: >-
+  Cursor-zoom demo of one real task on your product's screens: a big cursor glides, clicks, scrolls and drags while
+  the camera pushes in and pulls back with it, ending on the result. 18 seconds, square, wide and tall, with sound.
+  Use when the user asks for a cursor zoom, an auto-zoom demo, a screen-recording-style walkthrough or a feature clip.
 ---
 
 # Cursor camera
