@@ -1,7 +1,7 @@
 {
   "name": "omnigami-cursor-camera",
   "displayName": "Cursor camera",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Cursor-zoom demo of one real task on your product's screens: a big cursor glides, clicks, scrolls and drags while the camera pushes in and pulls back with it, ending on the result. 18 seconds, square, wide and tall, with sound. Use when the user asks for a cursor zoom, an auto-zoom demo, a screen-recording-style walkthrough or a feature clip.",
   "author": {
     "name": "omnigami",
